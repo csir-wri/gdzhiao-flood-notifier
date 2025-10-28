@@ -5,7 +5,6 @@
 
 from pathlib import Path
 from sys import version_info
-from typing import Tuple
 import mailer
 import model
 
@@ -22,15 +21,15 @@ def main():
         "Enter the path to the recipient database:\n > ").strip('"')
     roi_dir = input(
         "Enter the path to the folder with the ROI shape files:\n > ").strip('"')
-    towns_file = input(
-        "Enter the path to the towns shape file:\n > ").strip('"')
+    towns_dir = input(
+        "Enter the path to the folder with the towns shape files:\n > ").strip('"')
 
     # initialize the model
     ap = model.AlertProcessor()
 
     ap.load_recipients(recipient_file)
     ap.load_rois(sorted(Path(roi_dir).glob('**/*.shp')))
-    ap.load_towns(towns_file)
+    ap.load_towns(sorted(Path(towns_dir).glob('**/*.shp')))
 
     # # print(f"  Loaded {len(ap.rois)} ROIs and " +
     # #       f"{sum(len([v['towns'] for v in ap.rois.values()]))} towns.", end='\n')
@@ -43,45 +42,10 @@ def main():
 
     mailer.initialize()
     for alert in ap.get_alerts(model_file):
-        message = _compose_message(alert['roi'], alert['towns'])
+        message = mailer.compose_message(alert['roi'], alert['towns'])
         mailer.send_mail(alert["email"], message)
 
     print("The alert will re-run after 1 hour.")
-
-
-def _compose_message(roi_name: str, towns: Tuple[str, float]):
-    """Composes a an alert email to be sent to the recipients in the system.
-
-    Args:
-        roi_name (str): Name of the ROI for which the message is being composed
-        towns (Tuple[str, float]): List of tuples containing the names of towns and risk level.
-
-    Returns:
-        str: Content of the email to be composed.
-    """
-
-    from datetime import datetime  # pylint: disable=import-outside-toplevel
-
-    message = []
-    message.extend((f" {'':=^75} ", "",
-                    f" {'MiFMASS Flood Alert': ^75} ", "",
-                    f" {'':=^75} ", ""))
-
-    message.append(
-        f" {'Generated on': <16}: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    message.append(f" {'Location': <16}: {roi_name}")
-    message.append(f" {'Max Alert Level': <16}: {max(x[2] for x in towns)}")
-    message.append("")
-    message.append(" Affected Communities:")
-    message.append("-" * len(message[-1]))
-    message.append("")
-    message.append(f" {'Name': <40} {'Level': >10}")
-    message.extend(f" {x[1]: <40} {x[2]: >10}"
-                   for x in sorted(towns, key=lambda tup: tup[1]))
-    message.append("")
-    message.append(f" {'':=^75} ")
-
-    return "\n".join(message)
 
 
 def _validate_py_version(min_ver):
@@ -100,14 +64,13 @@ try:
         if __name__ == "__main__":
             main()
 
-except Exception:               # pylint: disable=broad-except
-    from sys import exc_info    # pylint: disable=ungrouped-imports
+except Exception as ex:                 # pylint: disable=broad-except
+    from traceback import format_exc    # pylint: disable=ungrouped-imports
 
-    exc = tuple(str(v) for v in exc_info())
-    print("\n".join(["An exception of type occurred while running the script.",
+    print("\n".join(["An exception occurred while running the script.",
                      "",
-                     "Type:     ", exc[0],
-                     "Message:  ", exc[1],
-                     "Traceback:", exc[2]]))
+                     "Type:      " + type(ex).__name__,
+                     "Message:   " + next(iter(ex.args), ""),
+                     "\n    ".join(format_exc().splitlines()[:-1])]))
 
 input("\n\nPress <ENTER> to exit. ")

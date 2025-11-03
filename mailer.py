@@ -28,8 +28,7 @@ _account = ""
 
 
 def initialize():
-    """Initializes the mailer module
-    """
+    """Initializes the mailer module"""
     # TODO: Find a way to change the SMTP host if the address is not Gmail
     global _server
     _server = smtplib.SMTP_SSL("smtp.gmail.com", SSL_PORT, context=ssl.create_default_context())

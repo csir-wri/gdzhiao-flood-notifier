@@ -51,41 +51,6 @@ def login(address, password):
         return LoginResult.OtherError
 
 
-def compose_message(roi_name: str, towns: Tuple[str, float]):
-    """Composes a an alert email to be sent to the recipients in the system.
-
-    Args:
-        roi_name (str): Name of the ROI for which the message is being composed
-        towns (Tuple[str, float]): List of tuples containing the names of towns and risk level.
-
-    Returns:
-        str: Content of the email to be composed.
-    """
-
-    from datetime import datetime  # pylint: disable=import-outside-toplevel
-
-    message = []
-    message.extend((f" {'':=^75} ", "",
-                    f" {'MiFMASS Flood Alert': ^75} ", "",
-                    f" {'':=^75} ", ""))
-
-    message.append(
-        f" {'Generated on': <16}: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    message.append(f" {'Location': <16}: {roi_name}")
-    message.append(f" {'Max Alert Level': <16}: {max(x[2] for x in towns)}")
-    message.append("")
-    message.append(" Affected Communities:")
-    message.append("-" * len(message[-1]))
-    message.append("")
-    message.append(f" {'Name': <40} {'Level': >10}")
-    message.extend(f" {x[1]: <40} {x[2]: >10}"
-                   for x in sorted(towns, key=lambda tup: tup[1]))
-    message.append("")
-    message.append(f" {'':=^75} ")
-
-    return "\n".join(message)
-
-
 def send_mail(recipient_address, body_text):
     """Sends an email to the specified recipient.
 

@@ -2,17 +2,39 @@
 
 import csv
 import logging
-from itertools import chain
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from sys import stderr
-from typing import Iterable, Union
-
-import geopandas as gpd
-import rasterio
-from numpy import amax
-from rasterio.mask import mask
+from typing import Iterable, Optional, Sequence, Union
 
 from model.recipient import Recipient
+
+# cSpell: ignoreCompoundWords
+
+
+@dataclass(frozen=True)
+class ForecastEntry:
+    date: datetime
+    mean: float
+    corrected: float
+    thresholds: tuple[float, ...]
+
+    @property
+    def alert_level(self):
+        levels = zip("GREEN YELLOW ORANGE RED".split(), self.thresholds)
+        return min(
+            (lvl for lvl in levels if lvl[1] >= self.corrected),
+            key=lambda lvl: lvl[1],
+            default=("UNKNOWN", 9999),
+        )
+
+
+@dataclass(frozen=True)
+class AlertData:
+    email: Sequence[str]
+    whatsapp: Optional[str]
+    locations: dict[str, list[ForecastEntry]]
 
 
 class AlertProcessor:
@@ -22,48 +44,18 @@ class AlertProcessor:
         """Creates a new instance of the flood notifier model"""
         logging.basicConfig(stream=stderr, level=logging.INFO)
 
-        self.user_db = None
-        self.recipients = []
+        self.recipients: list[Recipient] = []
         self.rois = {}
+        self.forecasts: dict[str, list[ForecastEntry]] = {}
 
-    def get_alerts(self, model_output: Union[str, Path]):
-        """Gets the alerts to be sent for the given model output.
-
-        Args:
-            model_output (Union[str, Path]): Path to the model output file
-
-        Yields:
-            dict: a dictionary of the form {"email": str,
-                                            "roi": str,
-                                            "towns": [(str, float),...]}
-
-        """  # mask each of the ROIs and compute the alerts based on that
-
-        with rasterio.open(model_output, "r+") as raster:
-            for roi_name, value in self.rois.items():
-                # discard the out_transform result from the mask method
-                roi_mask, _ = mask(
-                    raster, (value["geometry"],), all_touched=True, nodata=0, crop=True
-                )
-
-                roi_max_alert = amax(roi_mask)
-                alerts = []
-
-                if roi_max_alert > 0:
-                    alerts.append((roi_name, "", roi_max_alert))
-                    # process each affected town
-                    for town_name, town_geom in value["towns_10k"].items():
-                        town_mask, _ = mask(
-                            raster, (town_geom,), all_touched=True, nodata=0, crop=True
-                        )
-                        town_max_alert = amax(town_mask)
-                        if town_max_alert > 0:
-                            alerts.append((roi_name, town_name, town_max_alert))
-
-                # yield the alerts
-                for emails in (r.emails for r in self.recipients if roi_name.lower() in r.rois):
-                    for email in emails:
-                        yield {"email": email, "roi": roi_name, "towns": alerts}
+    def get_current_alerts(self):
+        for recipient in self.recipients:
+            rois = {
+                location: self.forecasts[location]
+                for location in recipient.rois
+                if location in self.forecasts
+            }
+            yield AlertData(recipient.emails, recipient.phone_numbers[0], rois)
 
     def load_recipients(self, db_path: Union[str, Path]):
         """Loads the recipients of the flood alerts from the specified path.
@@ -90,75 +82,87 @@ class AlertProcessor:
                 for row in reader:
                     yield Recipient(**row)
 
-        user_db = Path(db_path)
-        if user_db.suffix == ".csv":
-            self.recipients.extend(_read_from_csv(db_path))
+        if Path(db_path).suffix == ".csv":
+            self.recipients = list(_read_from_csv(db_path))
 
-    def load_rois(self, rois: Iterable[Union[str, Path]]):
-        """Loads the regions of interest geometric data.
+    def load_forecasts(self, forecast_files: Iterable[Path]):
+        self.forecasts.clear()
 
-        Args:
-            rois (Iterable[Union[str, Path]]): Iterable of FilePaths containing
-            the ROI geometric data.
-        """
+        for file in forecast_files:
+            file_lines = file.read_text().splitlines(keepends=True)
+            file_lines[0] = ",".join(("date", "mean", "corrected", "th1", "th2", "th3", "th4"))
+            reader = csv.DictReader(file_lines)
 
-        for path in (Path(p) for p in rois):
-            if path.exists() and path.is_file():
-                self.rois.update(
-                    (name, {"geometry": geom, "towns": {}, "towns_10k": {}})
-                    for (name, geom) in AlertProcessor._load_geometries(path)
+            forecasts = []
+            for row in reader:
+                # ensure blank numeric fields are zeroed before processing
+                for col in (col for col in row if col not in ("date",) and row[col] == ""):
+                    row[col] = "0.0"
+
+                entry = ForecastEntry(
+                    datetime.fromisoformat(row["date"]),
+                    float(row["mean"]),
+                    float(row["corrected"]),
+                    (float(row["th1"]), float(row["th2"]), float(row["th3"]), float(row["th4"])),
                 )
+                forecasts.append(entry)
 
-    def load_towns(self, shp_files: Iterable[Union[str, Path]]):
-        """Loads the towns and communities.
-
-        Args:
-            shp_files (Iterable[Union[str, Path]]): Iterable of file paths to the
-            POINT shape files of towns and communities.
-        """
-
-        assert any(self.rois), "There are no ROIs loaded."
-
-        for name, geom in chain.from_iterable(
-            AlertProcessor._load_geometries(shp_file) for shp_file in shp_files
-        ):
-            for val in self.rois.values():
-                if val["geometry"].contains(geom):
-                    val["towns"][name] = geom
-                    val["towns_10k"][name] = geom.buffer(10000)  # 10km buffer
-                    break
-            else:
-                pt = geom.representative_point()
-                logging.info(
-                    "No ROI was found for the town '%s' located at X:%s Y:%s",
-                    f"{name:<25}",
-                    pt.x,
-                    pt.y,
-                )
+            self.forecasts[file.stem.lower()] = forecasts
 
     @staticmethod
-    def _load_geometries(path: Union[str, Path]):
-        """Loads the geometric data in the resource with the specified path.
+    def compose_email_alert(locations: dict[str, list[ForecastEntry]]):
+        """Composes a an alert email to be sent to the recipients in the system.
 
         Args:
-            path (Union[str, Path]): Path to the resource containing geometric data.
+            roi_name (str): Name of the ROI for which the message is being composed
+            towns (Tuple[str, float]): List of tuples containing the names of towns and risk level.
 
-        Yields:
-            tuple[str, geometry]: A tuple containing the name and geometry loaded from the data.
+        Returns:
+            str: Content of the email to be composed.
         """
-        gdf = gpd.read_file(path)
 
-        # normalize column names
-        gdf.columns = [col.lower() for col in gdf.columns]
+        alert_locations = ", ".join([loc.title() for loc in sorted(locations.keys())])
 
-        # ensure the name and geometry columns are present
-        assert "name" in gdf.columns, (
-            f"There is no <Name> field in the attribute table.\nFile name: {path!s}"
+        message = []
+        message.extend(
+            (
+                f" {'':=^75} ",
+                "",
+                f" {'GDZHIAO Flood Forecasting System Alert': ^75} ",
+                "",
+                f" {'Generated on': <16}: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ",
+                f" {'Locations': <16}: {alert_locations or 'NO NEW ALERTS'} ",
+                "",
+                f" {'':=^75} ",
+                "",
+            )
         )
-        assert "geometry" in gdf.columns, (
-            f"The file does not contain any geometric data.\nFile name: {path!s}"
-        )
 
-        # yield the rows
-        for name, geom in ((str(row[1]["name"]), row[1]["geometry"]) for row in gdf.iterrows()):
-            yield (name, geom)
+        for idx, (location_name, forecasts) in enumerate(locations.items(), start=1):
+            max_alert = max(forecasts, key=lambda f: f.corrected)
+            message.append(f" {'Location': <16}: {location_name.title()}")
+            message.append(
+                f" {'Max Alert Level': <16}: {max_alert.alert_level[0]}"
+                f" ({max_alert.corrected:.2f}) "
+                f" on {max_alert.date.strftime('%d-%b-%Y')}"
+            )
+            message.append("")
+            message.append("-" * 75)
+            message.append("")
+            message.append(f" {'Date': <11} | {'Discharge': >11} | {'Alert Level': <14}")
+            message.append(f"-{'':-<11}-|-{'':->11}-|-{'':-<14}")
+            for fc in forecasts:
+                message.append(
+                    f" {fc.date.strftime('%d-%b-%Y'): <11} |"
+                    f" {fc.corrected: >11.2f} |"
+                    f" {fc.alert_level[0]: <14}",
+                )
+            message.append("")
+
+            if idx < len(locations):
+                message.append("-" * 75)
+                message.append("")
+
+            message.append(f" {'':=^75} ")
+
+        return "\n".join(message)

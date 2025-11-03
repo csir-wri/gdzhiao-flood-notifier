@@ -131,11 +131,15 @@ def main():
     ap.load_recipients(data_files["recipients"][0])
     ap.load_forecasts(data_files["forecasts"])
 
-    for alert in ap.get_current_alerts():
+    print("\nSending email alert")
+    for idx, alert in enumerate(ap.get_current_alerts(), start=1):
+        print(f"{idx:0>2}. {alert.email[0] or '<NO EMAIL PROVIDED>'!s}")
         message = ap.compose_email_alert(alert.locations)
         mailer.send_mail(alert.email, message)
+    else:
+        print("")
 
-    print("The alert will re-run after six hours.")
+    print("The Flood Alerts Notifier will run at the next scheduled time.")
 
 
 def read_data_files(data_dir: Path):

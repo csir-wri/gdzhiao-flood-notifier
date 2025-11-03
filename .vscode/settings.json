@@ -1,9 +1,12 @@
 {
     "cSpell.words": [
-        "MiFMASS",
         "amax",
+        "GDZHIAO",
+        "GFFS",
+        "GLOFAS",
         "iterrows",
         "itertuples",
+        "MiFMASS",
         "rasterio",
         "rois",
         "smtplib"

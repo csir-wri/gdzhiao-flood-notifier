@@ -5,11 +5,17 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Current File",
-            "type": "python",
+            "name": "main.py",
+            "type": "debugpy",
             "request": "launch",
             "program": "main.py",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "args": [
+                "--config_dir",
+                "${cwd}/config",
+                "--data_dir",
+                "${cwd}/sample_data"
+            ]
         }
     ]
 }

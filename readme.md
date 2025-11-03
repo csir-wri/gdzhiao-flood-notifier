@@ -11,7 +11,7 @@ most recent updates received from the GFFS to the registered recipients via emai
 1. Download and install Python from https://www.python.org/downloads/windows/.  
    To be able to run the application safely ensure the minimum version downloaded is Python 3.10.
 
-2. Download the ZIP source code of this repository [/archive/refs/heads/master.zip](/archive/refs/heads/master.zip)
+2. Download the ZIP source code of this repository [/archive/refs/heads/master.zip](../../archive/refs/heads/master.zip)
 
 3. Extract the ZIP to a location on your computer.
 

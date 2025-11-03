@@ -3,6 +3,7 @@
 """Parses flood model outputs and sends out alerts as required.
 """
 
+import sys
 from pathlib import Path
 from sys import version_info
 import mailer
@@ -48,29 +49,45 @@ def main():
     print("The alert will re-run after 1 hour.")
 
 
-def _validate_py_version(min_ver):
+def _ensure_min_python_version(min_ver):
     """Validates the version of the Python interpreter."""
 
-    if version_info < min_ver:
-        print("The minimum version required to run this script is " +
-              ".".join(str(x) for x in min_ver))
+    if sys.version_info < min_ver:
+        print(
+            "The minimum version required to run this script is "
+            + ".".join(str(x) for x in min_ver)
+        )
         return False
 
     return True
 
 
-try:
-    if _validate_py_version((3, 6)):
-        if __name__ == "__main__":
+if __name__ == "__main__":
+    try:
+        if _ensure_min_python_version((3, 10)):
             main()
 
-except Exception as ex:                 # pylint: disable=broad-except
-    from traceback import format_exc    # pylint: disable=ungrouped-imports
+    except Exception as ex:  # pylint: disable=broad-except
+        # pylint: disable=ungrouped-imports
+        import tempfile
+        from traceback import format_exc
 
-    print("\n".join(["An exception occurred while running the script.",
-                     "",
-                     "Type:      " + type(ex).__name__,
-                     "Message:   " + next(iter(ex.args), ""),
-                     "\n    ".join(format_exc().splitlines()[:-1])]))
+        dump = "\n".join(
+            [
+                "An exception occurred while running the script.",
+                "",
+                "Type:      " + type(ex).__name__,
+                "Message:   " + str(next(iter(ex.args), "")),
+                "\n    ".join(format_exc().splitlines()[:-1]),
+            ]
+        )
+
+        with tempfile.NamedTemporaryFile(
+            prefix="GFFS_Alert_", suffix=".log", mode="w+", delete=False
+        ) as tf:
+            tf.write(dump)
+            dump += f"\n\nError dump: {tf.name}"
+
+        print(dump)
 
 input("\n\nPress <ENTER> to exit. ")

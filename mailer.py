@@ -1,10 +1,11 @@
 """GMail mailing module."""
 
-
+import enum
 import smtplib
 import ssl
-from typing import Tuple
-import enum
+from email.mime.text import MIMEText
+from email.utils import formataddr
+
 SSL_PORT = 465
 
 
@@ -14,6 +15,7 @@ class LoginResult(enum.IntEnum):
     Args:
         enum (IntEnum): Login result.
     """
+
     Success = 0
     InvalidCredentials = 1
     OtherError = 2
@@ -21,26 +23,27 @@ class LoginResult(enum.IntEnum):
 
 # pylint: disable=invalid-name
 # pylint: disable=global-statement
-_server = None
+_server: smtplib.SMTP_SSL | None = None
+_account = ""
 
 
 def initialize():
     """Initializes the mailer module
     """
+    # TODO: Find a way to change the SMTP host if the address is not Gmail
     global _server
-    # create a secure SSL context
-    context = ssl.create_default_context()
+    _server = smtplib.SMTP_SSL("smtp.gmail.com", SSL_PORT, context=ssl.create_default_context())
+    ## _server.login("mifmass.alerts@gmail.com", "flood-alerts")
 
-    _server = smtplib.SMTP_SSL(
-        "smtp.gmail.com", SSL_PORT, context=context)
-    _server.login("mifmass.alerts@gmail.com", "flood-alerts")
+    return _server
 
 
 def login(address, password):
-    """Logs in to the mail address for dispatching emails to recipients.
-    """
+    """Logs in to the mail address for dispatching emails to recipients."""
     try:
-        _server.login(address, password)
+        (_server or initialize()).login(address, password)
+        global _account
+        _account = address
         return LoginResult.Success
     except smtplib.SMTPAuthenticationError:
         return LoginResult.InvalidCredentials
@@ -91,23 +94,20 @@ def send_mail(recipient_address, body_text):
         body_text (str): Text to be sent to the recipient.
     """
 
-    # compose raw email content
-    raw_content = ["From: MiFMASS Flood Alert <mifmass.alerts@gmail.com>",
-                   f"To: <{recipient_address}>",
-                   "Subject: MiFMASS Flood Alert",
-                   "MIME-Version: 1.0",
-                   "Content-Type: text/plain",
-                   "",
-                   body_text]
+    # use MIMEText to compose the email content
+    message = MIMEText(f"<pre>{body_text}</pre>", "html", "utf-8")
+    message["From"] = formataddr(("GDZHIAO Flood Forecasting System Alert", _account))
+    message["To"] = ", ".join(recipient_address)
+    message["Subject"] = "GFFS Alert"
 
-    global _server
-    _server.sendmail("mifmass.alerts@gmail.com",
-                     recipient_address, "\r\n".join(raw_content))
+    if _server:
+        _server.sendmail(_account, recipient_address, message.as_string())
 
 
 def logout():
     """Closes the mailer account."""
 
     global _server
-    _server.close()
+    if _server:
+        _server.close()
     _server = None
